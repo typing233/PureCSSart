@@ -78,12 +78,12 @@ function Home() {
 
       console.log('收到响应，状态:', res.status);
       
+      const text = await res.text();
       let data;
       try {
-        data = await res.json();
+        data = JSON.parse(text);
         console.log('响应数据:', data);
       } catch (parseError) {
-        const text = await res.text();
         console.error('响应解析失败:', text.substring(0, 500));
         throw new Error(`服务器响应格式错误 (${res.status}): ${text.substring(0, 200)}`);
       }

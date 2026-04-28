@@ -386,7 +386,8 @@ body::before {
   letter-spacing: 2px;
 }
 
-.loading-dots {
+.loading-dots::after {
+  content: '';
   display: inline-block;
   animation: dots 1.5s infinite;
 }

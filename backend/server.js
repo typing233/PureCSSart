@@ -101,12 +101,13 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
 
     const imagePath = req.file.path;
     const imageBase64 = fs.readFileSync(imagePath, 'base64');
-    const imageUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+    const imageMimeType = req.file.mimetype || 'image/jpeg';
+    const imageUrl = `/uploads/${req.file.filename}`;
 
     const huoshanService = new HuoshanService(apiKey, modelName, codeModelName);
 
     console.log('正在分析图片...');
-    const imageDescription = await huoshanService.analyzeImage(imageBase64);
+    const imageDescription = await huoshanService.analyzeImage(imageBase64, imageMimeType);
     console.log('图片分析完成:', imageDescription.substring(0, 100) + '...');
 
     const imageDimensions = { width: 400, height: 400 };
@@ -130,6 +131,14 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
 
   } catch (error) {
     console.error('转换错误:', error);
+    if (req.file) {
+      const resolvedPath = path.resolve(req.file.path);
+      if (resolvedPath.startsWith(uploadDir + path.sep) || resolvedPath === uploadDir) {
+        fs.unlink(resolvedPath, (err) => {
+          if (err) console.error('清理上传文件失败:', err);
+        });
+      }
+    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -194,7 +203,9 @@ app.get('/api/artworks/:id', (req, res) => {
 app.get('/api/gallery', (req, res) => {
   try {
     const { sort = 'time', page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const limitNum = Math.min(Math.max(parseInt(limit) || 20, 1), 100);
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const offset = (pageNum - 1) * limitNum;
     
     let orderBy = 'published_at DESC';
     if (sort === 'likes') {
@@ -207,7 +218,7 @@ app.get('/api/gallery', (req, res) => {
       WHERE is_published = 1
       ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
-    `).all(parseInt(limit), parseInt(offset));
+    `).all(limitNum, offset);
     
     const total = db.prepare(`
       SELECT COUNT(*) as count FROM artworks WHERE is_published = 1
@@ -216,9 +227,9 @@ app.get('/api/gallery', (req, res) => {
     res.json({
       artworks,
       total: total.count,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      totalPages: Math.ceil(total.count / limit)
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total.count / limitNum)
     });
   } catch (error) {
     console.error('获取画廊错误:', error);

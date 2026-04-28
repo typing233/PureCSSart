@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useCallback } from 'react';
 import { AppContext } from '../App';
 
 function Gallery() {
@@ -10,11 +10,7 @@ function Gallery() {
   const [totalPages, setTotalPages] = useState(1);
   const [likedItems, setLikedItems] = useState(new Set());
 
-  useEffect(() => {
-    fetchArtworks();
-  }, [sortBy, page]);
-
-  const fetchArtworks = async () => {
+  const fetchArtworks = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/gallery?sort=${sortBy}&page=${page}&limit=12`);
@@ -28,7 +24,11 @@ function Gallery() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [sortBy, page]);
+
+  useEffect(() => {
+    fetchArtworks();
+  }, [fetchArtworks]);
 
   const handleLike = async (id, e) => {
     e.stopPropagation();
