@@ -57,27 +57,52 @@ function Home() {
       return;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
+
     setConverting(true);
     try {
       const formData = new FormData();
       formData.append('image', imageFile);
 
+      console.log('开始转换图片...');
       const res = await fetch('/api/convert', {
         method: 'POST',
-        body: formData
+        body: formData,
+        signal: controller.signal
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || '转换失败');
+      console.log('收到响应，状态:', res.status);
+      
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseError) {
+        const text = await res.text();
+        console.error('响应解析失败:', text.substring(0, 500));
+        throw new Error(`服务器响应格式错误 (${res.status})`);
       }
 
+      if (!res.ok) {
+        throw new Error(data.error || `转换失败 (${res.status})`);
+      }
+
+      console.log('转换成功，CSS代码长度:', data.cssCode?.length || 0);
       setResult(data);
       showToast('转换成功！', 'success');
     } catch (error) {
-      showToast(error.message, 'error');
+      console.error('转换错误:', error);
+      
+      let errorMessage = error.message;
+      if (error.name === 'AbortError') {
+        errorMessage = '请求超时（5分钟），请稍后重试。AI 生成可能需要较长时间，请耐心等待。';
+      } else if (error.message.includes('Failed to fetch')) {
+        errorMessage = '网络连接失败，请检查后端服务是否正常运行。';
+      }
+      
+      showToast(errorMessage, 'error');
     } finally {
+      clearTimeout(timeoutId);
       setConverting(false);
     }
   };

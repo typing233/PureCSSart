@@ -88,9 +88,12 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: '请上传图片' });
     }
 
+    const DEFAULT_VISION_MODEL = 'doubao-seed-1-8-lite-260215';
+    const DEFAULT_CODE_MODEL = 'doubao-seed-1-8-lite-260215';
+    
     const apiKey = req.body.apiKey || getConfig('huoshan_api_key');
-    const modelName = req.body.modelName || getConfig('huoshan_model_name') || 'doubao-seed-1.8';
-    const codeModelName = req.body.codeModelName || getConfig('huoshan_code_model_name') || 'doubao-seed-1.8';
+    const modelName = req.body.modelName || getConfig('huoshan_model_name') || DEFAULT_VISION_MODEL;
+    const codeModelName = req.body.codeModelName || getConfig('huoshan_code_model_name') || DEFAULT_CODE_MODEL;
 
     if (!apiKey) {
       return res.status(400).json({ error: '请先配置火山方舟 API Key' });
