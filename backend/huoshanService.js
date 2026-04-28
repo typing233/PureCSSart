@@ -2,7 +2,7 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 
 const DEFAULT_VISION_MODEL = 'doubao-seed-1-8-lite-260215';
 const DEFAULT_CODE_MODEL = 'doubao-seed-1-8-lite-260215';
-const REQUEST_TIMEOUT = 120000;
+const REQUEST_TIMEOUT = 300000;
 
 class HuoshanService {
   constructor(apiKey, modelName, codeModelName) {
