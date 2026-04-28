@@ -80,7 +80,7 @@ class HuoshanService {
     return new Error(userMessage);
   }
 
-  async analyzeImage(imageBase64) {
+  async analyzeImage(imageBase64, mimeType = 'image/jpeg') {
     const url = `${this.baseUrl}/chat/completions`;
     
     console.log(`[视觉分析] 使用模型: ${this.modelName}`);
@@ -98,7 +98,7 @@ class HuoshanService {
             {
               type: 'image_url',
               image_url: {
-                url: `data:image/jpeg;base64,${imageBase64}`
+                url: `data:${mimeType};base64,${imageBase64}`
               }
             }
           ]
