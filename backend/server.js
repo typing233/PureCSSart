@@ -132,9 +132,12 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
   } catch (error) {
     console.error('转换错误:', error);
     if (req.file) {
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error('清理上传文件失败:', err);
-      });
+      const resolvedPath = path.resolve(req.file.path);
+      if (resolvedPath.startsWith(uploadDir + path.sep) || resolvedPath === uploadDir) {
+        fs.unlink(resolvedPath, (err) => {
+          if (err) console.error('清理上传文件失败:', err);
+        });
+      }
     }
     res.status(500).json({ error: error.message });
   }
@@ -201,7 +204,8 @@ app.get('/api/gallery', (req, res) => {
   try {
     const { sort = 'time', page = 1, limit = 20 } = req.query;
     const limitNum = Math.min(Math.max(parseInt(limit) || 20, 1), 100);
-    const offset = (parseInt(page) - 1) * limitNum;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const offset = (pageNum - 1) * limitNum;
     
     let orderBy = 'published_at DESC';
     if (sort === 'likes') {
@@ -223,7 +227,7 @@ app.get('/api/gallery', (req, res) => {
     res.json({
       artworks,
       total: total.count,
-      page: parseInt(page),
+      page: pageNum,
       limit: limitNum,
       totalPages: Math.ceil(total.count / limitNum)
     });

@@ -388,6 +388,7 @@ body::before {
 
 .loading-dots::after {
   content: '';
+  display: inline-block;
   animation: dots 1.5s infinite;
 }
 
