@@ -1,6 +1,7 @@
-import { useState, useRef, useContext } from 'react';
+import { useState, useRef, useContext, useEffect, useCallback } from 'react';
 import { AppContext } from '../App';
 import SplitView from '../components/SplitView';
+import TimelinePlayer from '../components/TimelinePlayer';
 
 function Home() {
   const { showToast, config } = useContext(AppContext);
@@ -10,6 +11,185 @@ function Home() {
   const [result, setResult] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
+  
+  const [snapshots, setSnapshots] = useState([]);
+  const [currentSnapshotIndex, setCurrentSnapshotIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [editableCss, setEditableCss] = useState('');
+  const [showEditor, setShowEditor] = useState(false);
+  const [autoSnapshotEnabled, setAutoSnapshotEnabled] = useState(true);
+  const autoSnapshotTimer = useRef(null);
+
+  const generateMockSnapshots = useCallback((finalCss) => {
+    const mockSnapshots = [];
+    const steps = 10;
+    
+    const emptyCss = `
+.css-art-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: repeating-conic-gradient(#2a2a3a 0% 25%, #1a1a25 0% 50%) 0 0 / 20px 20px;
+}
+`;
+    
+    mockSnapshots.push({
+      id: 'snapshot-0',
+      cssCode: emptyCss,
+      snapshotIndex: 0,
+      created_at: new Date().toISOString()
+    });
+    
+    const colorRegex = /#([0-9a-fA-F]{3,6})|rgb\(([^)]+)\)|rgba\(([^)]+)\)/g;
+    const colors = [];
+    let match;
+    while ((match = colorRegex.exec(finalCss)) !== null) {
+      colors.push(match[0]);
+    }
+    const uniqueColors = [...new Set(colors)].slice(0, 5);
+    
+    for (let i = 1; i < steps; i++) {
+      const progress = i / steps;
+      const stepCss = generateStepCss(progress, uniqueColors, finalCss);
+      mockSnapshots.push({
+        id: `snapshot-${i}`,
+        cssCode: stepCss,
+        snapshotIndex: i,
+        created_at: new Date(Date.now() - (steps - i) * 1000).toISOString()
+      });
+    }
+    
+    mockSnapshots.push({
+      id: `snapshot-${steps}`,
+      cssCode: finalCss,
+      snapshotIndex: steps,
+      created_at: new Date().toISOString()
+    });
+    
+    return mockSnapshots;
+  }, []);
+
+  const generateStepCss = (progress, colors, finalCss) => {
+    const baseColor = colors[0] || '#333333';
+    const opacity = Math.min(progress * 1.5, 1);
+    
+    if (progress < 0.3) {
+      return `
+.css-art-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, ${baseColor}${Math.round(opacity * 99).toString(16).padStart(2, '0')}, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.css-art-container::before {
+  content: '';
+  position: absolute;
+  width: ${Math.round(progress * 200)}px;
+  height: ${Math.round(progress * 200)}px;
+  background: ${baseColor};
+  border-radius: 50%;
+  opacity: ${opacity};
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+`;
+    } else if (progress < 0.6) {
+      const shapeCount = Math.floor(progress * 10);
+      let shapesCss = '';
+      for (let i = 0; i < shapeCount; i++) {
+        const color = colors[i % colors.length] || '#ffffff';
+        const size = 30 + Math.random() * 50;
+        const posX = 10 + Math.random() * 60;
+        const posY = 10 + Math.random() * 60;
+        shapesCss += `
+.css-art-container .shape-${i} {
+  position: absolute;
+  left: ${posX}%;
+  top: ${posY}%;
+  width: ${size}px;
+  height: ${size}px;
+  background: ${color};
+  border-radius: ${Math.random() > 0.5 ? '50%' : '10%'};
+  opacity: 0.8;
+  animation: floatShape ${2 + Math.random() * 2}s ease-in-out infinite;
+  animation-delay: ${Math.random() * 2}s;
+}
+`;
+      }
+      
+      return `
+.css-art-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: repeating-conic-gradient(#2a2a3a 0% 25%, #1a1a25 0% 50%) 0 0 / 20px 20px;
+  overflow: hidden;
+}
+
+${shapesCss}
+
+@keyframes floatShape {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-20px) rotate(5deg); }
+}
+`;
+    } else {
+      return finalCss;
+    }
+  };
+
+  const createSnapshot = useCallback(async (cssCode, artworkId = result?.artworkId) => {
+    if (!artworkId) return;
+    
+    try {
+      const res = await fetch(`/api/artworks/${artworkId}/snapshots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cssCode })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        console.log('快照已创建:', data.snapshotId);
+      }
+    } catch (error) {
+      console.error('创建快照失败:', error);
+    }
+  }, [result?.artworkId]);
+
+  const handleCssChange = useCallback((newCss) => {
+    setEditableCss(newCss);
+    
+    if (autoSnapshotTimer.current) {
+      clearTimeout(autoSnapshotTimer.current);
+    }
+    
+    if (autoSnapshotEnabled && result?.artworkId) {
+      autoSnapshotTimer.current = setTimeout(() => {
+        setSnapshots(prev => [...prev, {
+          id: `snapshot-${Date.now()}`,
+          cssCode: newCss,
+          snapshotIndex: prev.length,
+          created_at: new Date().toISOString()
+        }]);
+      }, 500);
+    }
+  }, [autoSnapshotEnabled, result?.artworkId]);
+
+  const handleSnapshotChange = useCallback((index) => {
+    setCurrentSnapshotIndex(index);
+    if (snapshots[index]) {
+      setEditableCss(snapshots[index].cssCode);
+    }
+  }, [snapshots]);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -36,6 +216,10 @@ function Home() {
     }
     setImageFile(file);
     setResult(null);
+    setSnapshots([]);
+    setCurrentSnapshotIndex(0);
+    setEditableCss('');
+    setShowEditor(false);
     const reader = new FileReader();
     reader.onload = (e) => setImagePreview(e.target.result);
     reader.readAsDataURL(file);
@@ -100,6 +284,12 @@ function Home() {
 
       console.log('转换成功，CSS代码长度:', data.cssCode.length);
       setResult(data);
+      setEditableCss(data.cssCode);
+      
+      const mockSnaps = generateMockSnapshots(data.cssCode);
+      setSnapshots(mockSnaps);
+      setCurrentSnapshotIndex(mockSnaps.length - 1);
+      
       showToast('转换成功！', 'success');
     } catch (error) {
       console.error('转换错误:', error);
@@ -129,9 +319,10 @@ function Home() {
   };
 
   const handleCopyCode = async () => {
-    if (result?.cssCode) {
+    const cssToCopy = editableCss || result?.cssCode;
+    if (cssToCopy) {
       try {
-        await navigator.clipboard.writeText(result.cssCode);
+        await navigator.clipboard.writeText(cssToCopy);
         showToast('代码已复制到剪贴板', 'success');
       } catch (error) {
         showToast('复制失败', 'error');
@@ -160,9 +351,20 @@ function Home() {
     setImageFile(null);
     setImagePreview(null);
     setResult(null);
+    setSnapshots([]);
+    setCurrentSnapshotIndex(0);
+    setEditableCss('');
+    setShowEditor(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  const getDisplayCss = () => {
+    if (snapshots.length > 0 && snapshots[currentSnapshotIndex]) {
+      return snapshots[currentSnapshotIndex].cssCode;
+    }
+    return editableCss || result?.cssCode || '';
   };
 
   return (
@@ -240,10 +442,53 @@ function Home() {
 
         {result && (
           <div style={{ marginTop: '32px' }}>
+            <div className="editor-controls">
+              <button 
+                className={`btn ${showEditor ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setShowEditor(!showEditor)}
+              >
+                {showEditor ? '隐藏编辑器' : '✏️ 编辑 CSS'}
+              </button>
+              <label className="auto-snapshot-toggle">
+                <input
+                  type="checkbox"
+                  checked={autoSnapshotEnabled}
+                  onChange={(e) => setAutoSnapshotEnabled(e.target.checked)}
+                />
+                <span>自动快照</span>
+              </label>
+            </div>
+
+            {showEditor && (
+              <div className="css-editor-container">
+                <div className="code-header">
+                  <span className="code-title">CSS 编辑器</span>
+                  <span className="editor-hint">修改后会自动保存快照</span>
+                </div>
+                <textarea
+                  className="css-editor"
+                  value={editableCss}
+                  onChange={(e) => handleCssChange(e.target.value)}
+                  spellCheck={false}
+                />
+              </div>
+            )}
+
             <SplitView 
               imageUrl={result.imageUrl}
-              cssCode={result.cssCode}
+              cssCode={getDisplayCss()}
+              artworkId={result.artworkId}
             />
+
+            {snapshots.length > 1 && (
+              <TimelinePlayer
+                snapshots={snapshots}
+                currentSnapshotIndex={currentSnapshotIndex}
+                onSnapshotChange={handleSnapshotChange}
+                isPlaying={isPlaying}
+                onPlayStateChange={setIsPlaying}
+              />
+            )}
 
             <div className="action-buttons">
               <button className="btn btn-primary" onClick={handleCopyCode}>
@@ -256,13 +501,15 @@ function Home() {
 
             <div className="code-block">
               <div className="code-header">
-                <span className="code-title">生成的 CSS 代码</span>
+                <span className="code-title">
+                  {isPlaying ? '当前快照 CSS 代码' : '生成的 CSS 代码'}
+                </span>
                 <button className="btn btn-outline" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={handleCopyCode}>
                   复制
                 </button>
               </div>
               <div className="code-content">
-                <pre>{result.cssCode}</pre>
+                <pre>{getDisplayCss()}</pre>
               </div>
             </div>
           </div>
