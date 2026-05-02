@@ -27,6 +27,12 @@ function Navbar() {
               >
                 画廊
               </Link>
+              <Link 
+                to="/fusion" 
+                className={`nav-link ${location.pathname === '/fusion' ? 'active' : ''}`}
+              >
+                融合
+              </Link>
               <div className={`status-badge ${config.hasApiKey ? 'connected' : 'disconnected'}`}>
                 <span className="status-dot"></span>
                 <span>{config.hasApiKey ? '已连接' : '未配置'}</span>
