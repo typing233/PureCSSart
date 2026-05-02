@@ -178,8 +178,29 @@ function Home() {
       setResult(data);
       setEditableCss(data.cssCode);
       
-      setSnapshots([]);
-      setCurrentSnapshotIndex(0);
+      try {
+        const snapRes = await fetch('/api/generate-structured-snapshots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cssCode: data.cssCode })
+        });
+        
+        if (snapRes.ok) {
+          const snapData = await snapRes.json();
+          console.log('结构化快照生成成功:', snapData.snapshots?.length, '个阶段');
+          setSnapshots(snapData.snapshots || []);
+          if (snapData.snapshots && snapData.snapshots.length > 0) {
+            setCurrentSnapshotIndex(snapData.snapshots.length - 1);
+          }
+        } else {
+          setSnapshots([]);
+          setCurrentSnapshotIndex(0);
+        }
+      } catch (snapError) {
+        console.error('生成结构化快照失败:', snapError);
+        setSnapshots([]);
+        setCurrentSnapshotIndex(0);
+      }
       
       showToast('转换成功！', 'success');
     } catch (error) {
