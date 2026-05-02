@@ -509,6 +509,57 @@ app.post('/api/aura-config', (req, res) => {
   }
 });
 
+function parseCSSValue(value) {
+  if (value.includes('px')) return parseInt(value);
+  if (value.includes('%')) return parseFloat(value);
+  if (value.includes('vw') || value.includes('vh')) return parseFloat(value) * 3;
+  if (value.includes('em') || value.includes('rem')) return parseFloat(value) * 16;
+  return parseInt(value) || 0;
+}
+
+function analyzeShapeImportance(shape) {
+  const rules = shape.rules;
+  let score = 0;
+  let sizeScore = 0;
+  let positionScore = 0;
+  let zIndexScore = 0;
+  let animationScore = 0;
+  
+  const widthMatch = rules.match(/width\s*:\s*([^;]+)/i);
+  const heightMatch = rules.match(/height\s*:\s*([^;]+)/i);
+  if (widthMatch && heightMatch) {
+    const w = parseCSSValue(widthMatch[1]);
+    const h = parseCSSValue(heightMatch[1]);
+    sizeScore = Math.min(w * h / 1000, 100);
+  }
+  
+  const zIndexMatch = rules.match(/z-index\s*:\s*([^;]+)/i);
+  if (zIndexMatch) {
+    const z = parseInt(zIndexMatch[1]);
+    zIndexScore = Math.max(0, z * 5);
+  }
+  
+  const hasAnimation = rules.match(/animation\s*:/i) || rules.match(/animation-name\s*:/i);
+  if (hasAnimation) animationScore = 20;
+  
+  const hasBoxShadow = rules.match(/box-shadow\s*:/i);
+  if (hasBoxShadow) score += 10;
+  
+  const hasFilter = rules.match(/filter\s*:/i);
+  if (hasFilter) score += 10;
+  
+  score = sizeScore * 0.5 + zIndexScore * 0.3 + animationScore * 0.15 + (hasBoxShadow ? 5 : 0);
+  
+  return {
+    score: score,
+    sizeScore: sizeScore,
+    zIndexScore: zIndexScore,
+    animationScore: animationScore,
+    hasAnimation: !!hasAnimation,
+    estimatedLayer: score > 60 ? 'primary' : (score > 30 ? 'secondary' : 'detail')
+  };
+}
+
 function parseCSSStructure(cssCode) {
   const layers = {
     background: {
@@ -517,7 +568,10 @@ function parseCSSStructure(cssCode) {
     },
     shapes: [],
     animations: {},
-    pseudos: []
+    pseudos: [],
+    primaryShapes: [],
+    secondaryShapes: [],
+    detailShapes: []
   };
 
   const ruleRegex = /([^{}]+)\{([^{}]*)\}/g;
@@ -552,28 +606,223 @@ function parseCSSStructure(cssCode) {
       if (bgImageMatch) layers.background.backgroundProps.backgroundImage = bgImageMatch[1].trim();
       
     } else if (selector.includes('::before') || selector.includes('::after')) {
-      layers.pseudos.push({
+      const pseudo = {
         selector: selector,
         rules: rules,
         isBefore: selector.includes('::before')
-      });
+      };
+      pseudo.importance = analyzeShapeImportance(pseudo);
+      layers.pseudos.push(pseudo);
+      
+      if (pseudo.importance.estimatedLayer === 'primary') {
+        layers.primaryShapes.push(pseudo);
+      } else if (pseudo.importance.estimatedLayer === 'secondary') {
+        layers.secondaryShapes.push(pseudo);
+      } else {
+        layers.detailShapes.push(pseudo);
+      }
+      
     } else if (selector.includes('.css-art-container .') || selector.startsWith('.')) {
       const classNameMatch = selector.match(/\.([a-zA-Z0-9_-]+)/);
       if (classNameMatch) {
-        layers.shapes.push({
+        const shape = {
           selector: selector,
           className: classNameMatch[1],
           rules: rules,
           fullRule: `${selector} { ${rules} }`
-        });
+        };
+        shape.importance = analyzeShapeImportance(shape);
+        layers.shapes.push(shape);
+        
+        if (shape.importance.estimatedLayer === 'primary') {
+          layers.primaryShapes.push(shape);
+        } else if (shape.importance.estimatedLayer === 'secondary') {
+          layers.secondaryShapes.push(shape);
+        } else {
+          layers.detailShapes.push(shape);
+        }
       }
     }
   }
+
+  layers.primaryShapes.sort((a, b) => b.importance.score - a.importance.score);
+  layers.secondaryShapes.sort((a, b) => b.importance.score - a.importance.score);
+  layers.detailShapes.sort((a, b) => b.importance.score - a.importance.score);
+  layers.shapes.sort((a, b) => b.importance.score - a.importance.score);
 
   layers.rawCss = cssCode;
   layers.keyframesMap = keyframesMap;
   
   return layers;
+}
+
+function removeAnimationFromRules(rules) {
+  let result = rules;
+  result = result.replace(/animation\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-name\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-duration\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-timing-function\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-delay\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-iteration-count\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-direction\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-fill-mode\s*:[^;]+;?/gi, '');
+  result = result.replace(/animation-play-state\s*:[^;]+;?/gi, '');
+  return result.trim();
+}
+
+function generateStructuredSnapshots(cssCode) {
+  const layers = parseCSSStructure(cssCode);
+  const snapshots = [];
+  
+  const baseContainer = `.css-art-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}`;
+
+  snapshots.push({
+    snapshotIndex: 0,
+    name: '空白画布',
+    description: '初始化容器',
+    cssCode: baseContainer
+  });
+
+  const bgProps = layers.background.backgroundProps;
+  let bgRules = baseContainer;
+  if (bgProps.background || bgProps.backgroundColor) {
+    const bgValue = bgProps.background || bgProps.backgroundColor;
+    bgRules = `.css-art-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: ${bgValue};
+}`;
+  }
+  
+  snapshots.push({
+    snapshotIndex: 1,
+    name: '背景层',
+    description: '添加背景样式',
+    cssCode: bgRules
+  });
+
+  if (layers.primaryShapes.length > 0) {
+    let primaryCss = bgRules + '\n\n';
+    const staticPrimary = layers.primaryShapes.slice(0, Math.ceil(layers.primaryShapes.length * 0.5));
+    staticPrimary.forEach(shape => {
+      const staticRules = removeAnimationFromRules(shape.rules);
+      primaryCss += `${shape.selector} {\n  ${staticRules}\n}\n\n`;
+    });
+    
+    snapshots.push({
+      snapshotIndex: 2,
+      name: '主体形状',
+      description: '添加主要视觉元素',
+      cssCode: primaryCss,
+      shapeCount: staticPrimary.length
+    });
+  }
+
+  if (layers.secondaryShapes.length > 0 || layers.primaryShapes.length > 0) {
+    let secondaryCss = bgRules + '\n\n';
+    
+    const allPrimary = layers.primaryShapes.map(shape => {
+      const staticRules = removeAnimationFromRules(shape.rules);
+      return `${shape.selector} {\n  ${staticRules}\n}`;
+    }).join('\n\n');
+    
+    if (allPrimary) secondaryCss += allPrimary + '\n\n';
+    
+    const staticSecondary = layers.secondaryShapes.slice(0, Math.ceil(layers.secondaryShapes.length * 0.7));
+    staticSecondary.forEach(shape => {
+      const staticRules = removeAnimationFromRules(shape.rules);
+      secondaryCss += `${shape.selector} {\n  ${staticRules}\n}\n\n`;
+    });
+    
+    snapshots.push({
+      snapshotIndex: 3,
+      name: '次要元素',
+      description: '添加次级视觉元素',
+      cssCode: secondaryCss,
+      shapeCount: layers.primaryShapes.length + staticSecondary.length
+    });
+  }
+
+  if (layers.detailShapes.length > 0 || layers.secondaryShapes.length > 0) {
+    let detailCss = bgRules + '\n\n';
+    
+    const allShapes = [...layers.primaryShapes, ...layers.secondaryShapes, ...layers.detailShapes];
+    allShapes.forEach(shape => {
+      const staticRules = removeAnimationFromRules(shape.rules);
+      detailCss += `${shape.selector} {\n  ${staticRules}\n}\n\n`;
+    });
+    
+    snapshots.push({
+      snapshotIndex: 4,
+      name: '细节装饰',
+      description: '添加细节和装饰元素',
+      cssCode: detailCss,
+      shapeCount: allShapes.length
+    });
+  }
+
+  let finalCss = bgRules + '\n\n';
+  const allShapes = [...layers.primaryShapes, ...layers.secondaryShapes, ...layers.detailShapes];
+  allShapes.forEach(shape => {
+    finalCss += `${shape.selector} {\n  ${shape.rules}\n}\n\n`;
+  });
+  
+  const animationNames = Object.keys(layers.animations);
+  if (animationNames.length > 0) {
+    const hasUsedAnimations = allShapes.some(s => 
+      s.rules.match(/animation\s*:/i) || s.rules.match(/animation-name\s*:/i)
+    );
+    
+    if (hasUsedAnimations) {
+      animationNames.forEach(name => {
+        finalCss += layers.animations[name] + '\n\n';
+      });
+      
+      snapshots.push({
+        snapshotIndex: 5,
+        name: '动画激活',
+        description: '添加并激活所有动画效果',
+        cssCode: finalCss,
+        hasAnimations: true,
+        animationCount: animationNames.length
+      });
+    } else {
+      snapshots.push({
+        snapshotIndex: 5,
+        name: '最终效果',
+        description: '完成所有元素的绘制',
+        cssCode: finalCss
+      });
+    }
+  } else {
+    snapshots.push({
+      snapshotIndex: 5,
+      name: '最终效果',
+      description: '完成所有元素的绘制',
+      cssCode: finalCss
+    });
+  }
+
+  snapshots.forEach((snap, idx) => {
+    snap.snapshotIndex = idx;
+  });
+
+  return {
+    snapshots: snapshots,
+    layers: {
+      primaryCount: layers.primaryShapes.length,
+      secondaryCount: layers.secondaryShapes.length,
+      detailCount: layers.detailShapes.length,
+      animationCount: Object.keys(layers.animations).length
+    }
+  };
 }
 
 function blendColor(color1, color2, ratio) {
@@ -943,6 +1192,27 @@ app.get('/api/artworks/selectable', (req, res) => {
     });
   } catch (error) {
     console.error('获取可选作品错误:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/generate-structured-snapshots', (req, res) => {
+  try {
+    const { cssCode } = req.body;
+    
+    if (!cssCode) {
+      return res.status(400).json({ error: '需要提供CSS代码' });
+    }
+    
+    const result = generateStructuredSnapshots(cssCode);
+    
+    res.json({
+      success: true,
+      snapshots: result.snapshots,
+      layers: result.layers
+    });
+  } catch (error) {
+    console.error('生成结构化快照错误:', error);
     res.status(500).json({ error: error.message });
   }
 });

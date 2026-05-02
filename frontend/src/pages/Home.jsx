@@ -20,225 +20,19 @@ function Home() {
   const [autoSnapshotEnabled, setAutoSnapshotEnabled] = useState(true);
   const autoSnapshotTimer = useRef(null);
 
-  const parseCSSIntoLayers = useCallback((cssCode) => {
-    const layers = {
-      background: null,
-      shapes: [],
-      keyframes: {},
-      containerRules: ''
-    };
-
-    const keyframesRegex = /@keyframes\s+([a-zA-Z0-9_-]+)\s*\{((?:[^{}]*\{[^{}]*\}[^{}]*)*)\}/g;
-    let match;
-    while ((match = keyframesRegex.exec(cssCode)) !== null) {
-      layers.keyframes[match[1]] = match[0];
-    }
-
-    const cssWithoutKeyframes = cssCode.replace(keyframesRegex, '');
-
-    const ruleRegex = /([^{}]+)\{([^{}]*)\}/g;
-    while ((match = ruleRegex.exec(cssWithoutKeyframes)) !== null) {
-      const selector = match[1].trim();
-      const rules = match[2].trim();
-
-      if (selector === '.css-art-container' || 
-          (selector.includes('.css-art-container') && 
-           !selector.includes('::before') && 
-           !selector.includes('::after') &&
-           !selector.includes('.css-art-container '))) {
-        layers.containerRules = rules;
-        
-        const bgMatch = rules.match(/background\s*:\s*([^;]+)/i);
-        const bgColorMatch = rules.match(/background-color\s*:\s*([^;]+)/i);
-        
-        if (bgMatch) {
-          layers.background = bgMatch[1].trim();
-        } else if (bgColorMatch) {
-          layers.background = bgColorMatch[1].trim();
-        }
-      } 
-      else if (selector.includes('.css-art-container .') || 
-               (selector.startsWith('.') && !selector.includes('::'))) {
-        const classNameMatch = selector.match(/\.([a-zA-Z0-9_-]+)(?:::|$|\s)/);
-        if (classNameMatch) {
-          let estimatedSize = 50;
-          const widthMatch = rules.match(/width\s*:\s*([^;]+)/i);
-          const heightMatch = rules.match(/height\s*:\s*([^;]+)/i);
-          
-          if (widthMatch) {
-            const w = parseFloat(widthMatch[1]);
-            if (!isNaN(w)) estimatedSize = w;
-          }
-          if (heightMatch) {
-            const h = parseFloat(heightMatch[1]);
-            if (!isNaN(h)) estimatedSize = Math.max(estimatedSize, h);
-          }
-
-          const positionMatch = rules.match(/(?:position|top|left|right|bottom|z-index)\s*:/i);
-          const decorativeMatch = rules.match(/(?:box-shadow|text-shadow|border|opacity\s*:\s*0\.[0-6]|animation)/i);
-          
-          let layerType = 'main';
-          if (decorativeMatch && estimatedSize < 40) {
-            layerType = 'detail';
-          } else if (positionMatch && estimatedSize < 60) {
-            layerType = 'detail';
-          }
-
-          layers.shapes.push({
-            selector: selector,
-            className: classNameMatch[1],
-            rules: rules,
-            fullRule: `${selector} { ${rules} }`,
-            estimatedSize: estimatedSize,
-            layerType: layerType
-          });
-        }
-      }
-    }
-
-    layers.shapes.sort((a, b) => b.estimatedSize - a.estimatedSize);
-
-    return layers;
-  }, []);
-
-  const generateProgressiveSnapshots = useCallback((finalCss) => {
-    if (!finalCss || finalCss.trim() === '') return [];
-
-    const layers = parseCSSIntoLayers(finalCss);
-    const snapshots = [];
-    const now = Date.now();
-
-    const emptyCanvasCss = `
-.css-art-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: repeating-conic-gradient(#2a2a3a 0% 25%, #1a1a25 0% 50%) 0 0 / 20px 20px;
-  overflow: hidden;
-}
-`;
-    snapshots.push({
-      id: `snapshot-prog-0`,
-      cssCode: emptyCanvasCss,
-      snapshotIndex: 0,
-      created_at: new Date(now - 10000).toISOString(),
-      stage: 'empty'
-    });
-
-    if (layers.background) {
-      const bgOnlyCss = `
-.css-art-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: ${layers.background};
-  overflow: hidden;
-}
-`;
-      snapshots.push({
-        id: `snapshot-prog-1`,
-        cssCode: bgOnlyCss,
-        snapshotIndex: 1,
-        created_at: new Date(now - 8000).toISOString(),
-        stage: 'background'
-      });
-    }
-
-    const mainShapes = layers.shapes.filter(s => s.layerType === 'main');
-    const detailShapes = layers.shapes.filter(s => s.layerType === 'detail');
-
-    for (let i = 0; i < mainShapes.length; i++) {
-      const shapesSoFar = mainShapes.slice(0, i + 1);
-      let stageCss = `
-.css-art-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: ${layers.background || '#1a1a25'};
-  overflow: hidden;
-}
-`;
-      shapesSoFar.forEach(shape => {
-        stageCss += '\n' + shape.fullRule + '\n';
-      });
-
-      snapshots.push({
-        id: `snapshot-prog-${snapshots.length}`,
-        cssCode: stageCss,
-        snapshotIndex: snapshots.length,
-        created_at: new Date(now - 8000 + (i + 1) * 1500).toISOString(),
-        stage: `main-shape-${i + 1}`
-      });
-    }
-
-    for (let i = 0; i < detailShapes.length; i++) {
-      const detailsSoFar = detailShapes.slice(0, i + 1);
-      let stageCss = `
-.css-art-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: ${layers.background || '#1a1a25'};
-  overflow: hidden;
-}
-`;
-      mainShapes.forEach(shape => {
-        stageCss += '\n' + shape.fullRule + '\n';
-      });
-      detailsSoFar.forEach(shape => {
-        stageCss += '\n' + shape.fullRule + '\n';
-      });
-
-      snapshots.push({
-        id: `snapshot-prog-${snapshots.length}`,
-        cssCode: stageCss,
-        snapshotIndex: snapshots.length,
-        created_at: new Date(now - 8000 + (mainShapes.length + i + 1) * 1500).toISOString(),
-        stage: `detail-${i + 1}`
-      });
-    }
-
-    if (Object.keys(layers.keyframes).length > 0) {
-      const finalWithAnimations = finalCss;
-      snapshots.push({
-        id: `snapshot-prog-${snapshots.length}`,
-        cssCode: finalWithAnimations,
-        snapshotIndex: snapshots.length,
-        created_at: new Date(now).toISOString(),
-        stage: 'final'
-      });
-    } else if (snapshots.length > 0) {
-      const lastSnapshot = snapshots[snapshots.length - 1];
-      if (lastSnapshot.stage !== 'final') {
-        snapshots.push({
-          id: `snapshot-prog-${snapshots.length}`,
-          cssCode: finalCss,
-          snapshotIndex: snapshots.length,
-          created_at: new Date(now).toISOString(),
-          stage: 'final'
-        });
-      }
-    }
-
-    return snapshots;
-  }, [parseCSSIntoLayers]);
-
   const fetchSnapshots = useCallback(async (artworkId) => {
     if (!artworkId) return;
     try {
       const res = await fetch(`/api/artworks/${artworkId}/snapshots`);
       if (res.ok) {
         const data = await res.json();
-        if (data.snapshots && data.snapshots.length > 1) {
-          setSnapshots(data.snapshots);
+        setSnapshots(data.snapshots || []);
+        if (data.snapshots && data.snapshots.length > 0) {
           setCurrentSnapshotIndex(data.snapshots.length - 1);
-          return data.snapshots;
         }
       }
-      return [];
     } catch (error) {
       console.error('获取快照失败:', error);
-      return [];
     }
   }, []);
 
@@ -384,18 +178,28 @@ function Home() {
       setResult(data);
       setEditableCss(data.cssCode);
       
-      const realSnapshots = await fetchSnapshots(data.artworkId);
-      
-      if (!realSnapshots || realSnapshots.length <= 1) {
-        const progressiveSnaps = generateProgressiveSnapshots(data.cssCode);
-        if (progressiveSnaps.length > 1) {
-          setSnapshots(progressiveSnaps);
-          setCurrentSnapshotIndex(progressiveSnaps.length - 1);
-          console.log('已生成渐进式快照，共', progressiveSnaps.length, '帧');
+      try {
+        const snapRes = await fetch('/api/generate-structured-snapshots', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cssCode: data.cssCode })
+        });
+        
+        if (snapRes.ok) {
+          const snapData = await snapRes.json();
+          console.log('结构化快照生成成功:', snapData.snapshots?.length, '个阶段');
+          setSnapshots(snapData.snapshots || []);
+          if (snapData.snapshots && snapData.snapshots.length > 0) {
+            setCurrentSnapshotIndex(snapData.snapshots.length - 1);
+          }
         } else {
           setSnapshots([]);
           setCurrentSnapshotIndex(0);
         }
+      } catch (snapError) {
+        console.error('生成结构化快照失败:', snapError);
+        setSnapshots([]);
+        setCurrentSnapshotIndex(0);
       }
       
       showToast('转换成功！', 'success');
