@@ -20,131 +20,21 @@ function Home() {
   const [autoSnapshotEnabled, setAutoSnapshotEnabled] = useState(true);
   const autoSnapshotTimer = useRef(null);
 
-  const generateMockSnapshots = useCallback((finalCss) => {
-    const mockSnapshots = [];
-    const steps = 10;
-    
-    const emptyCss = `
-.css-art-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: repeating-conic-gradient(#2a2a3a 0% 25%, #1a1a25 0% 50%) 0 0 / 20px 20px;
-}
-`;
-    
-    mockSnapshots.push({
-      id: 'snapshot-0',
-      cssCode: emptyCss,
-      snapshotIndex: 0,
-      created_at: new Date().toISOString()
-    });
-    
-    const colorRegex = /#([0-9a-fA-F]{3,6})|rgb\(([^)]+)\)|rgba\(([^)]+)\)/g;
-    const colors = [];
-    let match;
-    while ((match = colorRegex.exec(finalCss)) !== null) {
-      colors.push(match[0]);
-    }
-    const uniqueColors = [...new Set(colors)].slice(0, 5);
-    
-    for (let i = 1; i < steps; i++) {
-      const progress = i / steps;
-      const stepCss = generateStepCss(progress, uniqueColors, finalCss);
-      mockSnapshots.push({
-        id: `snapshot-${i}`,
-        cssCode: stepCss,
-        snapshotIndex: i,
-        created_at: new Date(Date.now() - (steps - i) * 1000).toISOString()
-      });
-    }
-    
-    mockSnapshots.push({
-      id: `snapshot-${steps}`,
-      cssCode: finalCss,
-      snapshotIndex: steps,
-      created_at: new Date().toISOString()
-    });
-    
-    return mockSnapshots;
-  }, []);
-
-  const generateStepCss = (progress, colors, finalCss) => {
-    const baseColor = colors[0] || '#333333';
-    const opacity = Math.min(progress * 1.5, 1);
-    
-    if (progress < 0.3) {
-      return `
-.css-art-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(135deg, ${baseColor}${Math.round(opacity * 99).toString(16).padStart(2, '0')}, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.css-art-container::before {
-  content: '';
-  position: absolute;
-  width: ${Math.round(progress * 200)}px;
-  height: ${Math.round(progress * 200)}px;
-  background: ${baseColor};
-  border-radius: 50%;
-  opacity: ${opacity};
-  animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-`;
-    } else if (progress < 0.6) {
-      const shapeCount = Math.floor(progress * 10);
-      let shapesCss = '';
-      for (let i = 0; i < shapeCount; i++) {
-        const color = colors[i % colors.length] || '#ffffff';
-        const size = 30 + Math.random() * 50;
-        const posX = 10 + Math.random() * 60;
-        const posY = 10 + Math.random() * 60;
-        shapesCss += `
-.css-art-container .shape-${i} {
-  position: absolute;
-  left: ${posX}%;
-  top: ${posY}%;
-  width: ${size}px;
-  height: ${size}px;
-  background: ${color};
-  border-radius: ${Math.random() > 0.5 ? '50%' : '10%'};
-  opacity: 0.8;
-  animation: floatShape ${2 + Math.random() * 2}s ease-in-out infinite;
-  animation-delay: ${Math.random() * 2}s;
-}
-`;
+  const fetchSnapshots = useCallback(async (artworkId) => {
+    if (!artworkId) return;
+    try {
+      const res = await fetch(`/api/artworks/${artworkId}/snapshots`);
+      if (res.ok) {
+        const data = await res.json();
+        setSnapshots(data.snapshots || []);
+        if (data.snapshots && data.snapshots.length > 0) {
+          setCurrentSnapshotIndex(data.snapshots.length - 1);
+        }
       }
-      
-      return `
-.css-art-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background: repeating-conic-gradient(#2a2a3a 0% 25%, #1a1a25 0% 50%) 0 0 / 20px 20px;
-  overflow: hidden;
-}
-
-${shapesCss}
-
-@keyframes floatShape {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  50% { transform: translateY(-20px) rotate(5deg); }
-}
-`;
-    } else {
-      return finalCss;
+    } catch (error) {
+      console.error('获取快照失败:', error);
     }
-  };
+  }, []);
 
   const createSnapshot = useCallback(async (cssCode, artworkId = result?.artworkId) => {
     if (!artworkId) return;
@@ -173,16 +63,18 @@ ${shapesCss}
     }
     
     if (autoSnapshotEnabled && result?.artworkId) {
-      autoSnapshotTimer.current = setTimeout(() => {
-        setSnapshots(prev => [...prev, {
+      autoSnapshotTimer.current = setTimeout(async () => {
+        const newSnapshot = {
           id: `snapshot-${Date.now()}`,
           cssCode: newCss,
-          snapshotIndex: prev.length,
+          snapshotIndex: snapshots.length,
           created_at: new Date().toISOString()
-        }]);
+        };
+        setSnapshots(prev => [...prev, newSnapshot]);
+        createSnapshot(newCss, result?.artworkId);
       }, 500);
     }
-  }, [autoSnapshotEnabled, result?.artworkId]);
+  }, [autoSnapshotEnabled, result?.artworkId, snapshots.length, createSnapshot]);
 
   const handleSnapshotChange = useCallback((index) => {
     setCurrentSnapshotIndex(index);
@@ -286,9 +178,8 @@ ${shapesCss}
       setResult(data);
       setEditableCss(data.cssCode);
       
-      const mockSnaps = generateMockSnapshots(data.cssCode);
-      setSnapshots(mockSnaps);
-      setCurrentSnapshotIndex(mockSnaps.length - 1);
+      setSnapshots([]);
+      setCurrentSnapshotIndex(0);
       
       showToast('转换成功！', 'success');
     } catch (error) {
